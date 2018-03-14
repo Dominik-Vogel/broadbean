@@ -1108,7 +1108,7 @@ class Element:
                 match 'gaussian', 'gaussian2', etc. If False, only the segment
                 with exact name match gets a replacement.
 
-        Raises:
+        Raises :
             ValueError: If the specified channel has no blueprint.
             ValueError: If the argument can not be matched (either the argument
                 name does not match or the argument number is wrong).
@@ -1977,10 +1977,84 @@ class Sequence:
 
         return elements
 
+    def outputForAbacoDacFile(self) -> List[np.ndarray]:
+        """
+        no documentation yet
+        """
+        # constants
+        MAX_V = 1.7
+        N_ELEMENTS_MIN = 0
+        N_ELEMENTS_DIVISOR = 1
+        N_CHANNELS = 8
+
+        # most of the footwork is done by the following function
+        elements = self._prepareForOutputting()
+        # _prepareForOutputting asserts that channel amplitudes and
+        # full sequencing is specified
+        seqlen = len(elements)
+        # all elements have ident. chans since _prepareForOutputting
+        # did not raise an exception
+        channels = self.element(1).channels
+
+        for chan in channels:
+            forbidden_keys = {
+                'offset': 'channel{}_offset'.format(chan),
+                'amplitude': 'channel{}_amplitude'.format(chan),
+                'filter': 'channel{}_filter'.format(chan)
+            }
+            for name, forbidden_key in forbidden_keys.items():
+                if forbidden_key in self._awgspecs:
+                    log.warning("Found a specified {} parameter for channel "
+                                "{}, but AbacoDac files can't contain this "
+                                "information. Will ignore it."
+                                "".format(name, chan))
+
+        # check length and amplitude
+        for pos in range(1, seqlen+1):
+            element = elements[pos-1]
+            for chan in channels:
+                wfm = element[chan][0]
+                # check the waveform length
+                if len(wfm) < N_ELEMENTS_MIN:
+                    raise ValueError('Waveform too short on channel '
+                                        '{} at step {}; only {} points. '
+                                        'The required minimum is 2400 points.'
+                                        ''.format(chan, pos, len(wfm)))
+
+                if len(wfm) % N_ELEMENTS_DIVISOR != 0:
+                    raise ValueError('Incopatible number of samples for waveform on channel '
+                                        '{} at step {}; there are {} samples. '
+                                        'The number of samples must be a multiple of {}'
+                                        ''.format(chan, pos, len(wfm), N_ELEMENTS_DIVISOR))
+
+                # check whether the waveform voltages can be realised
+                if wfm.max() > MAX_V:
+                    raise ValueError('Waveform voltages exceed channel range '
+                                        'on channel {}'.format(chan) +
+                                        ' sequence element {}.'.format(pos) +
+                                        ' {} > {}!'.format(wfm.max(), ampl/2))
+                if wfm.min() < -MAX_V:
+                    raise ValueError('Waveform voltages exceed channel range '
+                                        'on channel {}'.format(chan) +
+                                        ' sequence element {}. '.format(pos) +
+                                        '{} < {}!'.format(wfm.min(), -ampl/2))
+                element[chan][0] = wfm
+            elements[pos-1] = element
+
+        output = []
+        for block in range(seqlen):
+            n_samples = len(next(iter(elements[0].values()))[0])
+            block_data = np.zeros((n_samples, N_CHANNELS))
+            for chanind, chan in enumerate(channels):
+                block_data[..., chanind] = elements[pos-1][chanind][0]
+            output.append(block_data)
+
+        return output
+
     def outputForSEQXFile(self) -> Tuple[List[int], List[int], List[int],
-                                         List[int], List[int],
-                                         List[List[np.ndarray]],
-                                         List[float], str]:
+                                            List[int], List[int],
+                                            List[List[np.ndarray]],
+                                            List[float], str]:
         """
         Generate a tuple matching the call signature of the QCoDeS
         AWG70000A driver's `makeSEQXFile` function. If channel delays
@@ -2034,27 +2108,27 @@ class Sequence:
                 # check the waveform length
                 if len(wfm) < 2400:
                     raise ValueError('Waveform too short on channel '
-                                     '{} at step {}; only {} points. '
-                                     'The required minimum is 2400 points.'
-                                     ''.format(chan, pos, len(wfm)))
+                                        '{} at step {}; only {} points. '
+                                        'The required minimum is 2400 points.'
+                                        ''.format(chan, pos, len(wfm)))
                 # check whether the waveform voltages can be realised
                 if wfm.max() > ampl/2:
                     raise ValueError('Waveform voltages exceed channel range '
-                                     'on channel {}'.format(chan) +
-                                     ' sequence element {}.'.format(pos) +
-                                     ' {} > {}!'.format(wfm.max(), ampl/2))
+                                        'on channel {}'.format(chan) +
+                                        ' sequence element {}.'.format(pos) +
+                                        ' {} > {}!'.format(wfm.max(), ampl/2))
                 if wfm.min() < -ampl/2:
                     raise ValueError('Waveform voltages exceed channel range '
-                                     'on channel {}'.format(chan) +
-                                     ' sequence element {}. '.format(pos) +
-                                     '{} < {}!'.format(wfm.min(), -ampl/2))
+                                        'on channel {}'.format(chan) +
+                                        ' sequence element {}. '.format(pos) +
+                                        '{} < {}!'.format(wfm.min(), -ampl/2))
                 element[chan][0] = wfm
             elements[pos-1] = element
 
         # Finally cast the lists into the shapes required by the AWG driver
 
         waveforms = cast(List[List[np.ndarray]],
-                         [[] for dummy in range(len(channels))])
+                            [[] for dummy in range(len(channels))])
         nreps = []
         trig_waits = []
         gotos = []
@@ -2078,30 +2152,30 @@ class Sequence:
 
             if twait not in [0, 1, 2, 3]:
                 raise SequencingError('Invalid trigger input at position'
-                                      '{}: {}. Must be 0, 1, 2, or 3.'
-                                      ''.format(pos, twait))
+                                        '{}: {}. Must be 0, 1, 2, or 3.'
+                                        ''.format(pos, twait))
 
             if jump_state not in [0, 1, 2, 3]:
                 raise SequencingError('Invalid event jump input at position'
-                                      '{}: {}. Must be either 0, 1, 2, or 3.'
-                                      ''.format(pos, twait))
+                                        '{}: {}. Must be either 0, 1, 2, or 3.'
+                                        ''.format(pos, twait))
 
             if nrep not in range(0, 16384):
                 raise SequencingError('Invalid number of repetions at position'
-                                      '{}: {}. Must be either 0 (infinite) '
-                                      'or 1-16,383.'.format(pos, nrep))
+                                        '{}: {}. Must be either 0 (infinite) '
+                                        'or 1-16,383.'.format(pos, nrep))
 
             if jump_to not in range(-1, seqlen+1):
                 raise SequencingError('Invalid event jump target at position'
-                                      '{}: {}. Must be either -1 (next),'
-                                      ' 0 (off), or 1-{}.'
-                                      ''.format(pos, jump_to, seqlen))
+                                        '{}: {}. Must be either -1 (next),'
+                                        ' 0 (off), or 1-{}.'
+                                        ''.format(pos, jump_to, seqlen))
 
             if goto not in range(0, seqlen+1):
                 raise SequencingError('Invalid goto target at position'
-                                      '{}: {}. Must be either 0 (next),'
-                                      ' or 1-{}.'
-                                      ''.format(pos, goto, seqlen))
+                                        '{}: {}. Must be either 0 (next),'
+                                        ' or 1-{}.'
+                                        ''.format(pos, goto, seqlen))
 
             trig_waits.append(twait)
             nreps.append(nrep)
@@ -2335,6 +2409,7 @@ def elementBuilder(blueprints, SR, durations, channels=None,
                    returnnewdurs=False):
     """
     Forge blueprints into an element
+    this is not really clear to me
 
     Args:
         blueprints (Union[BluePrint, list]): A single blueprint or a list of
